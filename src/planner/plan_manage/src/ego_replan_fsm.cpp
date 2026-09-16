@@ -65,9 +65,12 @@ namespace ego_planner
     safety_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
                                              std::bind(&EGOReplanFSM::checkCollisionCallback, this));
 
+    // The simulation bridge publishes odometry using sensor-data (best-effort)
+    // QoS.  A reliable subscriber is incompatible with it and leaves EGO in
+    // INIT with no odometry.
     odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
         "odom_world",
-        1,
+        rclcpp::SensorDataQoS(),
         [this](const std::shared_ptr<const nav_msgs::msg::Odometry> &msg)
         {
           this->odometryCallback(msg);
@@ -111,6 +114,8 @@ namespace ego_planner
 
     bspline_pub_ = node_->create_publisher<traj_utils::msg::Bspline>("planning/bspline", 10);
     data_disp_pub_ = node_->create_publisher<traj_utils::msg::DataDisp>("planning/data_display", 100);
+    state_pub_ = node_->create_publisher<std_msgs::msg::String>(
+        "state", rclcpp::QoS(1).reliable().transient_local());
 
     if (target_type_ == TARGET_TYPE::MANUAL_TARGET)
     {
@@ -190,6 +195,7 @@ namespace ego_planner
 
     if (success)
     {
+      planner_error_ = false;
       end_pt_ = next_wp;
 
       constexpr double step_size_t = 0.1;
@@ -221,6 +227,7 @@ namespace ego_planner
     }
     else
     {
+      planner_error_ = true;
       RCLCPP_ERROR(node_->get_logger(), "Unable to generate global trajectory!");
     }
   }
@@ -239,9 +246,13 @@ namespace ego_planner
 
     cout << "Triggered!" << endl;
 
+    // Manual clients may send a sequence of goals. Completion resets the
+    // trigger flag, so restore it for every accepted manual target.
+    have_trigger_ = true;
     init_pt_ = odom_pos_;
 
-    Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y, 1.0);
+    Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y,
+                           msg->pose.position.z);
 
     planNextWaypoint(end_wp);
   }
@@ -630,12 +641,23 @@ namespace ego_planner
     data_disp_pub_->publish(data_disp_);
 
   force_return:;
+    publishState();
     // exec_timer_.start();
     if (exec_timer_ && exec_timer_->is_canceled())
     {
       // 取消状态下无需重新创建，可以复用现有计时器
       exec_timer_->reset();
     }
+  }
+
+  void EGOReplanFSM::publishState()
+  {
+    static const char *state_names[] = {
+        "INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ",
+        "EMERGENCY_STOP", "SEQUENTIAL_START"};
+    std_msgs::msg::String message;
+    message.data = planner_error_ ? "ERROR" : state_names[static_cast<int>(exec_state_)];
+    state_pub_->publish(message);
   }
 
   bool EGOReplanFSM::planFromGlobalTraj(const int trial_times /*=1*/) // zx-todo

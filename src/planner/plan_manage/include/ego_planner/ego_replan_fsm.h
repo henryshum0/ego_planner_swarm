@@ -9,6 +9,7 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/empty.hpp"
+#include "std_msgs/msg/string.hpp"
 #include <vector>
 #include "visualization_msgs/msg/marker.hpp"
 
@@ -79,6 +80,7 @@ namespace ego_planner
     int current_wp_;
 
     bool flag_escape_emergency_;
+    bool planner_error_{false};
 
     /* ROS utils */
     rclcpp::Node::SharedPtr node_;
@@ -96,6 +98,7 @@ namespace ego_planner
     rclcpp::Publisher<traj_utils::msg::DataDisp>::SharedPtr data_disp_pub_;
     rclcpp::Publisher<traj_utils::msg::MultiBsplines>::SharedPtr swarm_trajs_pub_;
     rclcpp::Publisher<traj_utils::msg::Bspline>::SharedPtr broadcast_bspline_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
 
     /* helper functions */
     bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method
@@ -111,6 +114,7 @@ namespace ego_planner
     void readGivenWps();
     void planNextWaypoint(const Eigen::Vector3d next_wp);
     void getLocalTarget();
+    void publishState();
 
     /* ROS functions */
     void execFSMCallback();
