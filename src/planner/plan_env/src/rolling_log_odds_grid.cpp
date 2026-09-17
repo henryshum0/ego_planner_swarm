@@ -67,9 +67,11 @@ void RollingLogOddsGrid::resetStorage()
   inflation_refcount_.assign(count, 0);
   virtual_ceiling_mask_.assign(count, 0);
   active_slot_.assign(count, -1);
+  inflated_slot_.assign(count, -1);
   observation_stamp_.assign(count, 0);
   observation_is_hit_.assign(count, 0);
   active_occupied_.clear();
+  active_inflated_.clear();
   observed_this_cloud_.clear();
   observation_generation_ = 0;
   rebuildVirtualCeiling();
@@ -115,9 +117,11 @@ void RollingLogOddsGrid::recenterTo(const Eigen::Vector3d & vehicle_position)
   inflation_refcount_.assign(count, 0);
   virtual_ceiling_mask_.assign(count, 0);
   active_slot_.assign(count, -1);
+  inflated_slot_.assign(count, -1);
   observation_stamp_.assign(count, 0);
   observation_is_hit_.assign(count, 0);
   active_occupied_.clear();
+  active_inflated_.clear();
   observed_this_cloud_.clear();
   observation_generation_ = 0;
 
@@ -263,6 +267,14 @@ Eigen::Vector3d RollingLogOddsGrid::indexToPosition(const Eigen::Vector3i & inde
   return origin_ + (index.cast<double>() + Eigen::Vector3d::Constant(0.5)) * config_.resolution;
 }
 
+Eigen::Vector3d RollingLogOddsGrid::addressToPosition(const std::size_t voxel_address) const
+{
+  if (voxel_address >= raw_log_odds_.size()) {
+    throw std::out_of_range("rolling-grid voxel address is outside the map");
+  }
+  return indexToPosition(indexFromAddress(voxel_address));
+}
+
 void RollingLogOddsGrid::rebuildDerivedState()
 {
   clearActiveOccupied();
@@ -291,6 +303,8 @@ void RollingLogOddsGrid::rebuildVirtualCeiling()
 void RollingLogOddsGrid::rebuildInflation()
 {
   std::fill(inflation_refcount_.begin(), inflation_refcount_.end(), 0);
+  std::fill(inflated_slot_.begin(), inflated_slot_.end(), -1);
+  active_inflated_.clear();
   for (std::size_t voxel_address = 0; voxel_address < raw_log_odds_.size(); ++voxel_address) {
     if (rawOccupied(voxel_address)) {
       adjustInflation(indexFromAddress(voxel_address), 1);
@@ -408,6 +422,28 @@ void RollingLogOddsGrid::removeActive(const std::size_t voxel_address)
   active_slot_[voxel_address] = -1;
 }
 
+void RollingLogOddsGrid::addActiveInflated(const std::size_t voxel_address)
+{
+  if (inflated_slot_[voxel_address] >= 0) {
+    return;
+  }
+  inflated_slot_[voxel_address] = static_cast<int>(active_inflated_.size());
+  active_inflated_.push_back(static_cast<int>(voxel_address));
+}
+
+void RollingLogOddsGrid::removeActiveInflated(const std::size_t voxel_address)
+{
+  const int slot = inflated_slot_[voxel_address];
+  if (slot < 0) {
+    return;
+  }
+  const int last_address = active_inflated_.back();
+  active_inflated_[static_cast<std::size_t>(slot)] = last_address;
+  inflated_slot_[static_cast<std::size_t>(last_address)] = slot;
+  active_inflated_.pop_back();
+  inflated_slot_[voxel_address] = -1;
+}
+
 void RollingLogOddsGrid::adjustInflation(const Eigen::Vector3i & center, const int delta)
 {
   for (int x = -horizontal_inflation_steps_; x <= horizontal_inflation_steps_; ++x) {
@@ -419,9 +455,15 @@ void RollingLogOddsGrid::adjustInflation(const Eigen::Vector3i & center, const i
         }
         auto & count = inflation_refcount_[address(index)];
         if (delta > 0) {
+          if (count == 0) {
+            addActiveInflated(address(index));
+          }
           ++count;
         } else if (count > 0) {
           --count;
+          if (count == 0) {
+            removeActiveInflated(address(index));
+          }
         }
       }
     }

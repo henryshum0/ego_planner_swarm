@@ -29,6 +29,7 @@ def generate_launch_description():
     rolling_recenter_distance_m = LaunchConfiguration('rolling_recenter_distance_m', default=10.0)
     rolling_recenter_distance_z_m = LaunchConfiguration('rolling_recenter_distance_z_m', default=5.0)
     obstacle_ttl_sec = LaunchConfiguration('obstacle_ttl_sec', default=30.0)
+    visualization_rate_hz = LaunchConfiguration('visualization_rate_hz', default=5.0)
 
     # The packaged depth demo uses its historical per-drone topic names.  In
     # direct-cloud mode the supplied topics are used literally so callers can
@@ -91,6 +92,9 @@ def generate_launch_description():
     obstacle_ttl_sec_arg = DeclareLaunchArgument(
         'obstacle_ttl_sec', default_value=obstacle_ttl_sec,
         description='Seconds before an unobserved direct-cloud obstacle expires')
+    visualization_rate_hz_arg = DeclareLaunchArgument(
+        'visualization_rate_hz', default_value=visualization_rate_hz,
+        description='Raw and inflated occupancy visualization publication rate')
     
     point_num_arg = DeclareLaunchArgument('point_num', default_value=point_num, description='Number of waypoints')
     point0_x_arg = DeclareLaunchArgument('point0_x', default_value=point0_x, description='Waypoint 0 X coordinate')
@@ -178,6 +182,7 @@ def generate_launch_description():
             {'grid_map/rolling_recenter_distance_m': rolling_recenter_distance_m},
             {'grid_map/rolling_recenter_distance_z_m': rolling_recenter_distance_z_m},
             {'grid_map/obstacle_ttl_sec': obstacle_ttl_sec},
+            {'grid_map/visualization_rate_hz': visualization_rate_hz},
             {'grid_map/local_map_margin': 10},
             {'grid_map/ground_height': -0.01},
             # camera parameter
@@ -266,6 +271,7 @@ def generate_launch_description():
     ld.add_action(rolling_recenter_distance_m_arg)
     ld.add_action(rolling_recenter_distance_z_m_arg)
     ld.add_action(obstacle_ttl_sec_arg)
+    ld.add_action(visualization_rate_hz_arg)
     
     ld.add_action(point_num_arg)
     ld.add_action(point0_x_arg)

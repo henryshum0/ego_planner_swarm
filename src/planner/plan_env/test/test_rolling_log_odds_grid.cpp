@@ -41,6 +41,8 @@ TEST(RollingLogOddsGrid, HitCrossesThresholdAndInflates)
   EXPECT_EQ(grid.getOccupancy(obstacle), 1);
   EXPECT_EQ(grid.getInflatedOccupancy(obstacle), 1);
   EXPECT_EQ(grid.getInflatedOccupancy(Eigen::Vector3d(3.5, 1.5, 2.5)), 1);
+  EXPECT_EQ(grid.rawOccupiedAddresses().size(), 1U);
+  EXPECT_EQ(grid.inflatedObstacleAddresses().size(), 27U);
 }
 
 TEST(RollingLogOddsGrid, FreeRayRemovesObstacleAndInflation)
@@ -57,6 +59,15 @@ TEST(RollingLogOddsGrid, FreeRayRemovesObstacleAndInflation)
 
   EXPECT_EQ(grid.getOccupancy(obstacle), 0);
   EXPECT_EQ(grid.getInflatedOccupancy(obstacle), 0);
+  EXPECT_EQ(grid.rawOccupiedAddresses().size(), 1U);
+  // The replacement endpoint is at the positive X boundary, so its nominal
+  // 3x3x3 inflation is clipped to 2x3x3 cells.
+  EXPECT_EQ(grid.inflatedObstacleAddresses().size(), 18U);
+  for (const int voxel_address : grid.inflatedObstacleAddresses()) {
+    EXPECT_GT(
+      (grid.addressToPosition(static_cast<std::size_t>(voxel_address)) - obstacle).norm(),
+      1.0e-9);
+  }
 }
 
 TEST(RollingLogOddsGrid, ExpiryRemovesUnobservedObstacle)
@@ -102,6 +113,9 @@ TEST(RollingLogOddsGrid, VirtualCeilingAndOutOfBoundsAreBlocked)
   RollingLogOddsGrid grid(config);
 
   EXPECT_EQ(grid.getInflatedOccupancy(Eigen::Vector3d(0.5, 0.5, 2.5)), 1);
+  // The ceiling remains part of collision checks but is not exported in the
+  // active obstacle-inflation list used for RViz publication.
+  EXPECT_TRUE(grid.inflatedObstacleAddresses().empty());
   EXPECT_EQ(grid.getInflatedOccupancy(Eigen::Vector3d(8.0, 0.0, 1.0)), -1);
 }
 }  // namespace

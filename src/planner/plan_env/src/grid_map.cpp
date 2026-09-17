@@ -1,5 +1,7 @@
 #include "plan_env/grid_map.h"
 
+#include <stdexcept>
+
 // #define current_img_ md_.depth_image_[image_cnt_ & 1]
 // #define last_img_ md_.depth_image_[!(image_cnt_ & 1)]
 
@@ -36,6 +38,7 @@ void GridMap::initMap(rclcpp::Node::SharedPtr node)
   node_->declare_parameter("grid_map/min_ray_length", -0.1);
   node_->declare_parameter("grid_map/max_ray_length", -0.1);
   node_->declare_parameter("grid_map/visualization_truncate_height", -0.1);
+  node_->declare_parameter("grid_map/visualization_rate_hz", 5.0);
   node_->declare_parameter("grid_map/virtual_ceil_height", -0.1);
   node_->declare_parameter("grid_map/virtual_ceil_yp", -0.1);
   node_->declare_parameter("grid_map/virtual_ceil_yn", -0.1);
@@ -77,6 +80,7 @@ void GridMap::initMap(rclcpp::Node::SharedPtr node)
   node_->get_parameter("grid_map/min_ray_length", mp_.min_ray_length_);
   node_->get_parameter("grid_map/max_ray_length", mp_.max_ray_length_);
   node_->get_parameter("grid_map/visualization_truncate_height", mp_.visualization_truncate_height_);
+  node_->get_parameter("grid_map/visualization_rate_hz", mp_.visualization_rate_hz_);
   node_->get_parameter("grid_map/virtual_ceil_height", mp_.virtual_ceil_height_);
   node_->get_parameter("grid_map/virtual_ceil_yp", mp_.virtual_ceil_yp_);
   node_->get_parameter("grid_map/virtual_ceil_yn", mp_.virtual_ceil_yn_);
@@ -90,6 +94,11 @@ void GridMap::initMap(rclcpp::Node::SharedPtr node)
   node_->get_parameter("grid_map/rolling_recenter_distance_m", mp_.rolling_recenter_distance_m_);
   node_->get_parameter("grid_map/rolling_recenter_distance_z_m", mp_.rolling_recenter_distance_z_m_);
   node_->get_parameter("grid_map/obstacle_ttl_sec", mp_.obstacle_ttl_sec_);
+
+  if (mp_.visualization_rate_hz_ <= 0.0)
+  {
+    throw std::invalid_argument("grid_map/visualization_rate_hz must be greater than zero");
+  }
 
   if (mp_.virtual_ceil_height_ - mp_.ground_height_ > z_size)
   {
@@ -206,7 +215,7 @@ void GridMap::initMap(rclcpp::Node::SharedPtr node)
       std::bind(&GridMap::updateOccupancyCallback, this));
 
   vis_timer_ = node_->create_wall_timer(
-      std::chrono::duration<double>(0.11),
+      std::chrono::duration<double>(1.0 / mp_.visualization_rate_hz_),
       std::bind(&GridMap::visCallback, this));
 
   // 发布者
@@ -988,34 +997,31 @@ void GridMap::publishRollingMap(const bool inflated)
   }
 
   pcl::PointCloud<pcl::PointXYZ> cloud;
-  const auto &voxel_count = md_.rolling_grid_->voxelCount();
-  for (int x = 0; x < voxel_count.x(); ++x)
+  // Iterate only active voxels. The old full-grid traversal inspected every
+  // cell twice per visualization tick (18 million checks for a 60x60x20 m
+  // map at 0.2 m resolution). Virtual-ceiling cells remain collision-active
+  // through getInflatedOccupancy(), but are intentionally not rendered as a
+  // dense plane.
+  const auto &active_addresses = inflated ? md_.rolling_grid_->inflatedObstacleAddresses()
+                                          : md_.rolling_grid_->rawOccupiedAddresses();
+  cloud.points.reserve(active_addresses.size());
+  for (const int active_address : active_addresses)
   {
-    for (int y = 0; y < voxel_count.y(); ++y)
+    if (active_address < 0)
     {
-      for (int z = 0; z < voxel_count.z(); ++z)
-      {
-        const Eigen::Vector3i index(x, y, z);
-        const std::size_t address = static_cast<std::size_t>(x) * voxel_count.y() * voxel_count.z() +
-                                    static_cast<std::size_t>(y) * voxel_count.z() + z;
-        const bool include = inflated ? md_.rolling_grid_->inflatedAt(address)
-                                      : md_.rolling_grid_->rawOccupiedAt(address);
-        if (!include)
-        {
-          continue;
-        }
-        const Eigen::Vector3d position = md_.rolling_grid_->indexToPosition(index);
-        if (position.z() > mp_.visualization_truncate_height_)
-        {
-          continue;
-        }
-        pcl::PointXYZ point;
-        point.x = position.x();
-        point.y = position.y();
-        point.z = position.z();
-        cloud.push_back(point);
-      }
+      continue;
     }
+    const Eigen::Vector3d position = md_.rolling_grid_->addressToPosition(
+      static_cast<std::size_t>(active_address));
+    if (position.z() > mp_.visualization_truncate_height_)
+    {
+      continue;
+    }
+    pcl::PointXYZ point;
+    point.x = position.x();
+    point.y = position.y();
+    point.z = position.z();
+    cloud.push_back(point);
   }
 
   cloud.width = cloud.points.size();
@@ -1024,6 +1030,8 @@ void GridMap::publishRollingMap(const bool inflated)
   cloud.header.frame_id = mp_.frame_id_;
   sensor_msgs::msg::PointCloud2 message;
   pcl::toROSMsg(cloud, message);
+  message.header.stamp = node_->now();
+  message.header.frame_id = mp_.frame_id_;
   publisher->publish(message);
 }
 
