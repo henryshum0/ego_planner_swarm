@@ -1,8 +1,9 @@
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # LaunchConfigurations
@@ -23,6 +24,23 @@ def generate_launch_description():
     max_vel = LaunchConfiguration('max_vel', default=2.0)
     max_acc = LaunchConfiguration('max_acc', default=3.0)
     planning_horizon = LaunchConfiguration('planning_horizon', default=7.5)
+    drone_id = LaunchConfiguration('drone_id', default=0)
+    direct_cloud_mode = LaunchConfiguration('direct_cloud_mode', default='false')
+    rolling_recenter_distance_m = LaunchConfiguration('rolling_recenter_distance_m', default=10.0)
+    rolling_recenter_distance_z_m = LaunchConfiguration('rolling_recenter_distance_z_m', default=5.0)
+    obstacle_ttl_sec = LaunchConfiguration('obstacle_ttl_sec', default=30.0)
+
+    # The packaged depth demo uses its historical per-drone topic names.  In
+    # direct-cloud mode the supplied topics are used literally so callers can
+    # attach the rolling map to a world-frame LiDAR/odometry pair.
+    planner_odom_topic = PythonExpression([
+        "'", odometry_topic, "' if '", direct_cloud_mode,
+        "'.lower() in ('true', '1', 'yes') else 'drone_", drone_id, "_", odometry_topic, "'"
+    ])
+    planner_cloud_topic = PythonExpression([
+        "'", cloud_topic, "' if '", direct_cloud_mode,
+        "'.lower() in ('true', '1', 'yes') else 'drone_", drone_id, "_", cloud_topic, "'"
+    ])
     
     point_num = LaunchConfiguration('point_num', default=1)
     point0_x = LaunchConfiguration('point0_x', default=0.0)
@@ -46,8 +64,6 @@ def generate_launch_description():
     
     obj_num_set = LaunchConfiguration('obj_num_set', default=10)
     
-    drone_id = LaunchConfiguration('drone_id', default=0)
-
     # DeclareLaunchArguments
     map_size_x_arg = DeclareLaunchArgument('map_size_x_', default_value=map_size_x, description='Map size along X')
     map_size_y_arg = DeclareLaunchArgument('map_size_y_', default_value=map_size_y, description='Map size along Y')
@@ -63,6 +79,18 @@ def generate_launch_description():
     max_vel_arg = DeclareLaunchArgument('max_vel', default_value=max_vel, description='Maximum velocity')
     max_acc_arg = DeclareLaunchArgument('max_acc', default_value=max_acc, description='Maximum acceleration')
     planning_horizon_arg = DeclareLaunchArgument('planning_horizon', default_value=planning_horizon, description='Planning horizon')
+    direct_cloud_mode_arg = DeclareLaunchArgument(
+        'direct_cloud_mode', default_value=direct_cloud_mode,
+        description='Use the persistent rolling direct point-cloud occupancy map instead of depth fusion')
+    rolling_recenter_distance_m_arg = DeclareLaunchArgument(
+        'rolling_recenter_distance_m', default_value=rolling_recenter_distance_m,
+        description='Horizontal vehicle displacement that recentres the rolling direct-cloud map')
+    rolling_recenter_distance_z_m_arg = DeclareLaunchArgument(
+        'rolling_recenter_distance_z_m', default_value=rolling_recenter_distance_z_m,
+        description='Vertical vehicle displacement that recentres the rolling direct-cloud map')
+    obstacle_ttl_sec_arg = DeclareLaunchArgument(
+        'obstacle_ttl_sec', default_value=obstacle_ttl_sec,
+        description='Seconds before an unobserved direct-cloud obstacle expires')
     
     point_num_arg = DeclareLaunchArgument('point_num', default_value=point_num, description='Number of waypoints')
     point0_x_arg = DeclareLaunchArgument('point0_x', default_value=point0_x, description='Waypoint 0 X coordinate')
@@ -93,7 +121,7 @@ def generate_launch_description():
         name=['drone_', drone_id, '_ego_planner_node'],
         output='screen',
         remappings=[
-            ('odom_world', ['drone_', drone_id, '_', odometry_topic]),
+            ('odom_world', planner_odom_topic),
             ('planning/bspline', ['drone_', drone_id, '_planning/bspline']),
             ('planning/data_display', ['drone_', drone_id, '_planning/data_display']),
             ('planning/broadcast_bspline_from_planner', '/broadcast_bspline'),
@@ -105,8 +133,8 @@ def generate_launch_description():
             ('optimal_list', ['drone_', drone_id, '_plan_vis/optimal_list']),
             ('a_star_list', ['drone_', drone_id, '_plan_vis/a_star_list']),
             
-            ('grid_map/odom', ['drone_', drone_id, '_', odometry_topic]),
-            ('grid_map/cloud', ['drone_', drone_id, '_', cloud_topic]),
+            ('grid_map/odom', planner_odom_topic),
+            ('grid_map/cloud', planner_cloud_topic),
             ('grid_map/pose', ['drone_', drone_id, '_', camera_pose_topic]),
             ('grid_map/depth', ['drone_', drone_id, '_', depth_topic]),
             ('grid_map/occupancy_inflate', ['drone_', drone_id, '_grid/grid_map/occupancy_inflate'])
@@ -146,6 +174,10 @@ def generate_launch_description():
             {'grid_map/local_update_range_y': 5.5},
             {'grid_map/local_update_range_z': 4.5},
             {'grid_map/obstacles_inflation': 0.099},
+            {'grid_map/direct_cloud_mode': ParameterValue(direct_cloud_mode, value_type=bool)},
+            {'grid_map/rolling_recenter_distance_m': rolling_recenter_distance_m},
+            {'grid_map/rolling_recenter_distance_z_m': rolling_recenter_distance_z_m},
+            {'grid_map/obstacle_ttl_sec': obstacle_ttl_sec},
             {'grid_map/local_map_margin': 10},
             {'grid_map/ground_height': -0.01},
             # camera parameter
@@ -154,7 +186,9 @@ def generate_launch_description():
             {'grid_map/fx': fx},
             {'grid_map/fy': fy},
             # depth filter
-            {'grid_map/use_depth_filter': True},
+            {'grid_map/use_depth_filter': ParameterValue(PythonExpression([
+                "not ('", direct_cloud_mode, "'.lower() in ('true', '1', 'yes'))"
+            ]), value_type=bool)},
             {'grid_map/depth_filter_tolerance': 0.15},
             {'grid_map/depth_filter_maxdist': 5.0},
             {'grid_map/depth_filter_mindist': 0.2},
@@ -162,10 +196,14 @@ def generate_launch_description():
             {'grid_map/k_depth_scaling_factor': 1000.0},
             {'grid_map/skip_pixel': 2},
             # local fusion
-            {'grid_map/p_hit': 0.65},
+            {'grid_map/p_hit': ParameterValue(PythonExpression([
+                "0.70 if '", direct_cloud_mode, "'.lower() in ('true', '1', 'yes') else 0.65"
+            ]), value_type=float)},
             {'grid_map/p_miss': 0.35},
             {'grid_map/p_min': 0.12},
-            {'grid_map/p_max': 0.90},
+            {'grid_map/p_max': ParameterValue(PythonExpression([
+                "0.97 if '", direct_cloud_mode, "'.lower() in ('true', '1', 'yes') else 0.90"
+            ]), value_type=float)},
             {'grid_map/p_occ': 0.80},
             {'grid_map/min_ray_length': 0.1},
             {'grid_map/max_ray_length': 4.5},
@@ -224,6 +262,10 @@ def generate_launch_description():
     ld.add_action(max_vel_arg)
     ld.add_action(max_acc_arg)
     ld.add_action(planning_horizon_arg)
+    ld.add_action(direct_cloud_mode_arg)
+    ld.add_action(rolling_recenter_distance_m_arg)
+    ld.add_action(rolling_recenter_distance_z_m_arg)
+    ld.add_action(obstacle_ttl_sec_arg)
     
     ld.add_action(point_num_arg)
     ld.add_action(point0_x_arg)

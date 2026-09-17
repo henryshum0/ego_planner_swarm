@@ -6,6 +6,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <nav_msgs/msg/odometry.hpp>
 #include <queue>
@@ -23,6 +24,7 @@
 #include <message_filters/time_synchronizer.h>
 
 #include <plan_env/raycast.h>
+#include <plan_env/rolling_log_odds_grid.h>
 
 #define logit(x) (log((x) / (1 - (x))))
 
@@ -85,6 +87,12 @@ struct MappingParameters
   double visualization_truncate_height_, virtual_ceil_height_, ground_height_, virtual_ceil_yp_, virtual_ceil_yn_;
   bool show_occ_time_;
 
+  /* direct point-cloud rolling map */
+  bool direct_cloud_mode_;
+  double rolling_recenter_distance_m_;
+  double rolling_recenter_distance_z_m_;
+  double obstacle_ttl_sec_;
+
   /* active mapping */
   double unknown_flag_;
 };
@@ -97,6 +105,7 @@ struct MappingData
 
   std::vector<double> occupancy_buffer_;
   std::vector<char> occupancy_buffer_inflate_;
+  std::unique_ptr<plan_env::RollingLogOddsGrid> rolling_grid_;
 
   // camera position and pose data
 
@@ -170,9 +179,9 @@ public:
 
   inline void setOccupancy(Eigen::Vector3d pos, double occ = 1);
   inline void setOccupied(Eigen::Vector3d pos);
-  inline int getOccupancy(Eigen::Vector3d pos);
+  int getOccupancy(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3i id);
-  inline int getInflateOccupancy(Eigen::Vector3d pos);
+  int getInflateOccupancy(Eigen::Vector3d pos);
 
   inline void boundIndex(Eigen::Vector3i &id);
   inline bool isUnknown(const Eigen::Vector3i &id);
@@ -219,6 +228,7 @@ private:
   void projectDepthImage();
   void raycastProcess();
   void clearAndInflateLocalMap();
+  void publishRollingMap(bool inflated);
 
   inline void inflatePoint(const Eigen::Vector3i &pt, int step, vector<Eigen::Vector3i> &pts);
   int setCacheOccupancy(Eigen::Vector3d pos, int occ);
@@ -341,28 +351,6 @@ inline void GridMap::setOccupancy(Eigen::Vector3d pos, double occ)
   posToIndex(pos, id);
 
   md_.occupancy_buffer_[toAddress(id)] = occ;
-}
-
-inline int GridMap::getOccupancy(Eigen::Vector3d pos)
-{
-  if (!isInMap(pos))
-    return -1;
-
-  Eigen::Vector3i id;
-  posToIndex(pos, id);
-
-  return md_.occupancy_buffer_[toAddress(id)] > mp_.min_occupancy_log_ ? 1 : 0;
-}
-
-inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos)
-{
-  if (!isInMap(pos))
-    return -1;
-
-  Eigen::Vector3i id;
-  posToIndex(pos, id);
-
-  return int(md_.occupancy_buffer_inflate_[toAddress(id)]);
 }
 
 inline int GridMap::getOccupancy(Eigen::Vector3i id)

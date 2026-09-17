@@ -54,6 +54,7 @@ ament_export_include_directories(include)
 
 add_library( plan_env SHARED
     src/grid_map.cpp 
+    src/rolling_log_odds_grid.cpp
     src/raycast.cpp
     src/obj_predictor.cpp 
     )
@@ -83,5 +84,13 @@ install(DIRECTORY include/${PROJECT_NAME}/
 )
 
 ament_export_libraries(plan_env)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_rolling_log_odds_grid
+    test/test_rolling_log_odds_grid.cpp)
+  target_link_libraries(test_rolling_log_odds_grid plan_env)
+  ament_target_dependencies(test_rolling_log_odds_grid Eigen3)
+endif()
 
 ament_package()
